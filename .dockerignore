@@ -1,0 +1,15 @@
+.git
+.github
+**/node_modules
+**/dist
+**/target
+**/playwright-report
+**/test-results
+Back-end/uploads/**
+Back-end/data/*.sqlite
+Back-end/data/*.sqlite-shm
+Back-end/data/*.sqlite-wal
+.env
+.env.*
+backend/data/*
+!backend/data/seed.json

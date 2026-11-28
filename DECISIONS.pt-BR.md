@@ -107,3 +107,9 @@ Uso este registro para explicar as decisões que definem o MVP atual do NextHub.
 - **Minha decisão:** coloco o status do candidato ao lado da ação de perfil, mantenho os dois controles do mesmo tamanho, alinho o status à direita e deixo o currículo acessível pelo perfil.
 - **Alternativas que considerei:** eu poderia manter um botão de currículo separado na linha do candidato ou deixar o status em outra linha.
 - **Por que escolhi isso:** organizo a linha do candidato sem remover o acesso ao currículo.
+
+## Preparação de hospedagem em planos gratuitos
+
+- **Minha decisão:** preservei SQLite e arquivos locais como padrão de desenvolvimento e adicionei um perfil `prod` com PostgreSQL/Flyway, sessões JDBC e currículos em bucket privado do Supabase Storage. Preparei o front-end para Vercel e a API Java para Render com Docker, sem publicar os serviços.
+- **Alternativas que considerei:** eu poderia substituir a arquitetura local, usar armazenamento público de currículos ou publicar antes de validar serviços e credenciais.
+- **Por que escolhi isso:** mantenho o fluxo local existente e documento um caminho de hospedagem reproduzível, mantendo segredos e documentos fora do front-end. Os planos gratuitos têm suspensão por inatividade, limites de recursos e ausência de garantias adequadas para produção; por isso, trato o deploy como demonstração e exijo serviços pagos e backups para uso confiável.

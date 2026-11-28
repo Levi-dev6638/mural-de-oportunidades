@@ -6,12 +6,11 @@ import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import org.springframework.boot.ApplicationArguments;
 import org.springframework.boot.ApplicationRunner;
+import org.springframework.beans.factory.annotation.Value;
+import org.springframework.core.io.ClassPathResource;
 import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
-import java.nio.charset.StandardCharsets;
-import java.nio.file.Files;
-import java.nio.file.Path;
 import java.time.Instant;
 
 @Service
@@ -22,6 +21,9 @@ public class SeedService implements ApplicationRunner {
     private final FavoriteRepository favorites;
     private final PasswordEncoder encoder;
     private final ObjectMapper mapper;
+
+    @Value("${nexthub.seed.enabled:true}")
+    private boolean seedEnabled;
 
     public SeedService(UserRepository users, OpportunityRepository opportunities,
                        ApplicationRepository applications, FavoriteRepository favorites,
@@ -37,11 +39,15 @@ public class SeedService implements ApplicationRunner {
     @Override
     @Transactional
     public void run(ApplicationArguments args) throws Exception {
-        Path seed = Path.of("backend", "data", "seed.json");
-        if (!Files.exists(seed)) seed = Path.of("..", "backend", "data", "seed.json");
-        if (!Files.exists(seed) || users.count() > 0) return;
+        if (!seedEnabled || users.count() > 0) return;
 
-        JsonNode root = mapper.readTree(seed.toFile());
+        ClassPathResource seed = new ClassPathResource("data/seed.json");
+        if (!seed.exists()) throw new IllegalStateException("Classpath resource data/seed.json is missing.");
+
+        JsonNode root;
+        try (var input = seed.getInputStream()) {
+            root = mapper.readTree(input);
+        }
         for (JsonNode item : root.path("users")) {
             User user = new User();
             user.setId(item.path("id").asText());

@@ -8,6 +8,11 @@ backend/uploads/*
 !backend/uploads/.gitkeep
 back-end/uploads/*
 back-end/data/*.sqlite
+/Back-end/data/*.sqlite
+/Back-end/data/*.sqlite-shm
+/Back-end/data/*.sqlite-wal
+/Back-end/uploads/*
+!/Back-end/uploads/.gitkeep
 .env
 .env.*
 !.env.example

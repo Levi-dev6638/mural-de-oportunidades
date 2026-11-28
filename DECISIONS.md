@@ -107,3 +107,9 @@ I use this log to explain the decisions that define the current NextHub MVP. I g
 - **My decision:** I place the candidate status beside the profile action, keep both controls the same size, align the status to the right, and put résumé access inside the candidate profile.
 - **Alternatives I considered:** I could have kept a separate résumé button in the candidate row or left status on a different line.
 - **Why I chose it:** the candidate row stays organized while résumé access remains available from the profile.
+
+## Free-tier hosting preparation
+
+- **My decision:** I kept SQLite and local files as development defaults and added a `prod` profile with PostgreSQL/Flyway, JDBC sessions, and résumés in a private Supabase Storage bucket. I prepared the frontend for Vercel and the Java API for Render with Docker, without publishing any services.
+- **Alternatives I considered:** I could have replaced the local architecture, used public résumé storage, or published before validating services and credentials.
+- **Why I chose it:** this preserves the existing local workflow and documents a reproducible hosting path while keeping secrets and documents out of the frontend. Free plans have inactivity suspension, resource limits, and no production-grade reliability guarantees; I therefore treat this deployment as a demo and require paid services and verified backups for dependable use.

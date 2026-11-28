@@ -23,6 +23,7 @@ import static org.springframework.test.web.servlet.request.MockMvcRequestBuilder
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.multipart;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.patch;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
+import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.content;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
@@ -87,9 +88,16 @@ class NextHubHappyPathTests {
                 "curriculo.pdf",
                 MediaType.APPLICATION_PDF_VALUE,
                 "%PDF-1.4\n%%EOF".getBytes(StandardCharsets.US_ASCII));
-        mvc.perform(multipart("/api/resume").file(resume).session(session))
+        MvcResult resumeUpload = mvc.perform(multipart("/api/resume").file(resume).session(session))
                 .andExpect(status().isOk())
-                .andExpect(jsonPath("$.user.profile.resumeName").value("curriculo.pdf"));
+                .andExpect(jsonPath("$.user.profile.resumeName").value("curriculo.pdf"))
+                .andReturn();
+        String resumeUrl = mapper.readTree(resumeUpload.getResponse().getContentAsString())
+                .path("user").path("profile").path("resume").asText();
+        mvc.perform(get(resumeUrl).session(session))
+                .andExpect(status().isOk())
+                .andExpect(content().contentType(MediaType.APPLICATION_PDF))
+                .andExpect(content().bytes("%PDF-1.4\n%%EOF".getBytes(StandardCharsets.US_ASCII)));
 
         MvcResult application = mvc.perform(post("/api/applications/o1").session(session))
                 .andExpect(status().isCreated())

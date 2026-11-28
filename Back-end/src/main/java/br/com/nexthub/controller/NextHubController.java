@@ -2,19 +2,22 @@ package br.com.nexthub.controller;
 
 import br.com.nexthub.model.*;
 import br.com.nexthub.repository.*;
+import br.com.nexthub.service.storage.FileStorageService;
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import jakarta.servlet.http.HttpServletRequest;
 import jakarta.servlet.http.HttpSession;
-import org.springframework.beans.factory.annotation.Value;
-import org.springframework.core.io.FileSystemResource;
 import org.springframework.core.io.Resource;
 import org.springframework.http.*;
 import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.web.bind.annotation.*;
 import org.springframework.web.multipart.MultipartFile;
-import java.nio.file.*;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+
+import java.io.IOException;
+import java.nio.file.NoSuchFileException;
 import java.time.Instant;
 import java.util.*;
 import java.util.stream.Collectors;
@@ -24,6 +27,7 @@ import java.util.stream.Collectors;
 public class NextHubController {
     private static final String SESSION_USER = "nexthubUserId";
     private static final TypeReference<List<Map<String, String>>> COURSE_LIST_TYPE = new TypeReference<>() {};
+    private static final Logger log = LoggerFactory.getLogger(NextHubController.class);
     private final UserRepository users;
     private final OpportunityRepository opportunities;
     private final ApplicationRepository applications;
@@ -31,13 +35,12 @@ public class NextHubController {
     private final ResumeRepository resumes;
     private final PasswordEncoder encoder;
     private final ObjectMapper mapper;
-
-    @Value("${nexthub.upload-dir}")
-    private String uploadDir;
+    private final FileStorageService fileStorage;
 
     public NextHubController(UserRepository users, OpportunityRepository opportunities,
                              ApplicationRepository applications, FavoriteRepository favorites,
-                             ResumeRepository resumes, PasswordEncoder encoder, ObjectMapper mapper) {
+                             ResumeRepository resumes, PasswordEncoder encoder, ObjectMapper mapper,
+                             FileStorageService fileStorage) {
         this.users = users;
         this.opportunities = opportunities;
         this.applications = applications;
@@ -45,6 +48,7 @@ public class NextHubController {
         this.resumes = resumes;
         this.encoder = encoder;
         this.mapper = mapper;
+        this.fileStorage = fileStorage;
     }
 
     private User requireUser(HttpServletRequest request) {
@@ -454,9 +458,10 @@ public class NextHubController {
                                                              HttpServletRequest request) throws Exception {
         User u = requireUser(request);
         requireRole(u, "student");
+        String originalFilename = Objects.toString(file.getOriginalFilename(), "");
         if (file.isEmpty() || file.getSize() > 5 * 1024 * 1024 ||
                 !"application/pdf".equalsIgnoreCase(file.getContentType()) ||
-                !file.getOriginalFilename().toLowerCase(Locale.ROOT).endsWith(".pdf")) {
+                !originalFilename.toLowerCase(Locale.ROOT).endsWith(".pdf")) {
             throw new IllegalArgumentException("Envie um arquivo PDF válido de até 5 MB.");
         }
         byte[] bytes = file.getBytes();
@@ -464,17 +469,32 @@ public class NextHubController {
                 !new String(bytes, 0, 5, java.nio.charset.StandardCharsets.US_ASCII).startsWith("%PDF-")) {
             throw new IllegalArgumentException("O arquivo enviado não é um PDF válido.");
         }
-        Files.createDirectories(Paths.get(uploadDir));
         Resume resume = resumes.findByStudentId(u.getId()).orElseGet(Resume::new);
-        String filename = u.getId() + "-" + UUID.randomUUID() + ".pdf";
-        Path target = Paths.get(uploadDir).resolve(filename);
-        Files.write(target, bytes, StandardOpenOption.CREATE_NEW);
+        String previousStoragePath = resume.getStoragePath();
+        String storagePath = UUID.randomUUID() + ".pdf";
+        String storedPath = fileStorage.store(storagePath, bytes, "application/pdf");
         resume.setStudent(u);
-        resume.setOriginalName(file.getOriginalFilename());
+        resume.setOriginalName(originalFilename);
         resume.setMimeType("application/pdf");
-        resume.setStoragePath(target.toAbsolutePath().toString());
+        resume.setStoragePath(storedPath);
         resume.setUploadedAt(Instant.now());
-        resumes.save(resume);
+        try {
+            resumes.save(resume);
+        } catch (RuntimeException saveError) {
+            try {
+                fileStorage.delete(storedPath);
+            } catch (IOException cleanupError) {
+                saveError.addSuppressed(cleanupError);
+            }
+            throw saveError;
+        }
+        if (previousStoragePath != null && !previousStoragePath.equals(storedPath)) {
+            try {
+                fileStorage.delete(previousStoragePath);
+            } catch (IOException cleanupError) {
+                log.warn("Could not remove replaced résumé from storage.", cleanupError);
+            }
+        }
         return ResponseEntity.ok(Map.of("user", userMap(u)));
     }
 
@@ -490,10 +510,12 @@ public class NextHubController {
                     .anyMatch(a -> a.getOpportunity().getOwner().getId().equals(u.getId()));
             if (!authorized) throw new ForbiddenException();
         }
-        Path path = Paths.get(resume.getStoragePath());
-        if (!Files.exists(path)) throw new NotFoundException();
-        return ResponseEntity.ok()
-                .contentType(MediaType.APPLICATION_PDF)
-                .body(new FileSystemResource(path));
+        try {
+            return ResponseEntity.ok()
+                    .contentType(MediaType.APPLICATION_PDF)
+                    .body(fileStorage.load(resume.getStoragePath()));
+        } catch (NoSuchFileException missingFile) {
+            throw new NotFoundException();
+        }
     }
 }

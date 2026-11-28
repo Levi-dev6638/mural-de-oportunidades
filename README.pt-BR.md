@@ -26,7 +26,7 @@ No fluxo de candidatura interna, exijo um currículo. Para anúncios externos, d
 
 - **Front-end:** escolhi React 18, Vite 6, JavaScript e CSS.
 - **Back-end:** escolhi Java 25, Spring Boot 3.5, Spring Data JPA, Hibernate 6 e Bean Validation.
-- **Persistência:** uso SQLite em `Back-end/data/nexthub.sqlite` e guardo os currículos enviados em `Back-end/uploads/`.
+- **Persistência:** uso SQLite e arquivos locais no desenvolvimento; para hospedagem, configurei PostgreSQL e Supabase Storage privado.
 - **Testes e qualidade:** uso JUnit 5, Spring Boot Test, Maven, ESLint e GitHub Actions.
 
 ## Estrutura do repositório
@@ -65,7 +65,7 @@ npm --prefix frontend ci
 copy .env.example .env
 ```
 
-No macOS/Linux, use `cp .env.example .env` no lugar de `copy`. Esse arquivo configura a URL usada pelo proxy do Vite; o back-end usa os caminhos padrão definidos em `application.properties`, sem exigir um arquivo `.env`.
+No macOS/Linux, use `cp .env.example .env` no lugar de `copy`. O `.env` da raiz configura somente o proxy do Vite. Opcionalmente, o back-end carrega `Back-end/.env` ao iniciar; se o arquivo não existir, usa os padrões de `application.properties`. Variáveis já definidas no sistema operacional têm prioridade. Não defina `SPRING_PROFILES_ACTIVE=prod` para o desenvolvimento local: sem essa configuração, o SQLite e o armazenamento local continuam sendo usados.
 
 ## Executar localmente
 
@@ -152,11 +152,50 @@ Configurei o Playwright para iniciar a API e o Vite automaticamente e usar um SQ
 
 Configurei o GitHub Actions para executar em pull requests direcionados à `main` e em pushes na `main`. O workflow instala as dependências Node, executa lint e build do front-end, testes Maven do back-end e fluxos E2E com Playwright. Mantive essa configuração em `.github/workflows/ci.yml`. A última execução que verifiquei para `dev`, no commit `7be0a89`, terminou com sucesso ([execução 7](https://github.com/Levi-dev6638/NextHub/actions/runs/45915995752)).
 
-## Persistência, segurança e deploy
+## Persistência e segurança
 
-Modelei as tabelas principais para usuários, oportunidades, candidaturas, favoritos e currículos; calculo as recomendações no front-end a partir do perfil. Uso Hibernate (`ddl-auto=update`) para criar ou atualizar as tabelas SQLite, mas reconheço que essa opção não substitui migrações versionadas em produção. Importo `backend/data/seed.json` somente quando o banco ainda não tem usuários e não sobrescrevo registros existentes. Protegi a autenticação com sessões HTTP e senhas com hash BCrypt. Limitei os currículos enviados a 5 MB e permito acesso somente ao estudante dono ou à empresa responsável por uma oportunidade à qual ele se candidatou.
+Modelei as tabelas principais para usuários, oportunidades, candidaturas, favoritos e currículos; calculo as recomendações no front-end a partir do perfil. Localmente, uso Hibernate (`ddl-auto=update`) com SQLite e armazenamento de arquivos em `Back-end/uploads/`. No perfil `prod`, uso PostgreSQL com migrações Flyway e sessões HTTP persistidas no banco. Os currículos ficam em um bucket privado do Supabase Storage; somente a API usa a chave de serviço, após verificar a autorização do estudante ou da empresa. Importo `backend/data/seed.json` somente quando habilitado e o banco ainda não tem usuários. Protejo senhas com hash BCrypt e limito currículos a 5 MB.
 
-Preparei esta configuração para uma demonstração acadêmica local, não para um deploy de produção com múltiplas instâncias. Antes de publicar o projeto, eu precisaria adicionar armazenamento compartilhado e durável para sessões, persistência e arquivos, além de HTTPS e backups operacionais. Ainda não configurei um deploy hospedado.
+## Preparação para deploy (não publicado)
+
+Preparei a hospedagem com Vercel para o front-end, Render para a API Java e Supabase para PostgreSQL e currículos. Nenhum serviço foi criado ou publicado por este repositório. O fluxo recomendado é:
+
+1. **Supabase:** crie um projeto e um bucket de Storage privado chamado `nexthub-resumes`. Restrinja o bucket a PDFs e 5 MB. No painel **Connect**, copie os dados do **Shared Pooler — Session mode**; esse modo atende ao Render em IPv4 e é compatível com sessões JDBC e migrações. Use os dados do pooler para preencher a URL JDBC, usuário e senha. A primeira inicialização da API aplica a migração Flyway.
+2. **Render:** crie um Web Service Docker ligado ao repositório. Configure o diretório raiz como `.` (contexto de build na raiz), o Dockerfile como `Back-end/Dockerfile` e o health check como `/actuator/health`. Cadastre as variáveis abaixo no painel do serviço; não as coloque no código ou no front-end.
+3. **Vercel:** importe o repositório com `frontend/` como diretório raiz. O build Vite gera `dist/`; o app usa caminhos relativos `/api`, então não precisa de `VITE_API_URL` no deploy. Depois que o Render fornecer a URL pública, substitua `https://your-nexthub-api.onrender.com` em `frontend/vercel.json` pela origem real da API. O rewrite encaminha `/api/*` pelo mesmo domínio do front-end para manter a sessão do navegador.
+
+Variáveis do serviço Render:
+
+| Variável | Valor |
+| --- | --- |
+| `SPRING_PROFILES_ACTIVE` | `prod` |
+| `DATABASE_URL` | `jdbc:postgresql://<host-do-pooler>:5432/postgres?sslmode=require` |
+| `DATABASE_USERNAME` | Usuário exato mostrado pelo Supabase para o pooler |
+| `DATABASE_PASSWORD` | Senha do banco Supabase |
+| `SUPABASE_URL` | `https://<project-ref>.supabase.co` |
+| `SUPABASE_STORAGE_BUCKET` | `nexthub-resumes` |
+| `SUPABASE_SERVICE_ROLE_KEY` | Chave de serviço do projeto; segredo exclusivo do back-end |
+| `NEXTHUB_CORS_ALLOWED_ORIGIN` | URL HTTPS exata do front-end Vercel |
+| `NEXTHUB_SEED_ENABLED` | `false` |
+| `DATABASE_POOL_MAX` | `5` (opcional) |
+
+No `.env.example`, `VITE_API_URL` configura somente o proxy local do Vite; os demais valores são referências e o Spring não carrega esse arquivo. Configure as variáveis de produção nos painéis dos provedores; não envie chaves, senhas ou arquivos `.env` ao Git. Não torne o bucket público e nunca configure a chave de serviço no Vercel. O seed de demonstração fica desabilitado por padrão em `prod`.
+
+**Limites importantes do plano gratuito:** Render Free pode suspender a API após 15 minutos sem tráfego, demora para acordar e tem sistema de arquivos efêmero; o SQLite local e os arquivos locais não persistem nesse ambiente. Supabase Free atualmente inclui 500 MB de banco e 1 GB de arquivos, mas pode pausar projetos após uma semana sem atividade e não substitui uma estratégia de backup. Os limites podem mudar; confira os links oficiais antes de configurar. O próprio Render recomenda não usar instâncias Free para aplicações de produção. Portanto, esta configuração é adequada para demonstração e avaliação, não oferece SLA ou durabilidade de produção; use serviços pagos e backups verificados se os dados forem importantes. Como currículos contêm dados pessoais, teste com dados fictícios até estabelecer consentimento, retenção e requisitos de privacidade.
+
+Referências oficiais: [planos Supabase](https://supabase.com/pricing), [conexões PostgreSQL do Supabase](https://supabase.com/docs/guides/database/connecting-to-postgres), [buckets privados](https://supabase.com/docs/guides/storage/buckets/fundamentals), [limites Render Free](https://render.com/docs/free) e [plano Hobby da Vercel](https://vercel.com/docs/plans/hobby).
+
+Antes do deploy, valide localmente:
+
+```sh
+npm run lint:frontend
+npm run build:frontend
+npm test
+cd Back-end
+.\mvnw.cmd -Pproduction -DskipTests package
+```
+
+Também confirme no ambiente hospedado `/actuator/health`, login e persistência de sessão, cadastro/candidatura e upload/download de um PDF. Teste que um estudante e uma empresa sem autorização não conseguem baixar currículos alheios. O build Docker e a integração real com Supabase precisam ser verificados no provedor, pois dependem de Docker e credenciais/serviços externos.
 
 ## Equipe
 
@@ -168,4 +207,4 @@ Preparei esta configuração para uma demonstração acadêmica local, não para
 ## Links
 
 - **Repositório:** <https://github.com/Levi-dev6638/mural-de-oportunidades>
-- **Deploy:** Não configurado
+- **Deploy:** Preparado, mas não publicado

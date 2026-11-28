@@ -26,7 +26,7 @@ I require a résumé for internal applications and send students to the publishe
 
 - **Frontend:** I chose React 18, Vite 6, JavaScript, and CSS.
 - **Backend:** I chose Java 25, Spring Boot 3.5, Spring Data JPA, Hibernate 6, and Bean Validation.
-- **Persistence:** I use SQLite at `Back-end/data/nexthub.sqlite` and store uploaded résumés in `Back-end/uploads/`.
+- **Persistence:** I use SQLite and local files for development; the hosting configuration uses PostgreSQL and private Supabase Storage.
 - **Tests and quality:** I use JUnit 5, Spring Boot Test, Maven, ESLint, and GitHub Actions.
 
 ## Repository layout
@@ -65,7 +65,7 @@ npm --prefix frontend ci
 copy .env.example .env
 ```
 
-On macOS/Linux, use `cp .env.example .env` instead of `copy`. This configures the Vite API URL; the backend uses the defaults in `application.properties` and does not require a `.env` file.
+On macOS/Linux, use `cp .env.example .env` instead of `copy`. The root `.env` configures only the Vite proxy. The backend optionally loads `Back-end/.env` at startup; if it is absent, the defaults in `application.properties` apply. Existing operating-system variables take precedence. Do not set `SPRING_PROFILES_ACTIVE=prod` for local development; without that explicit setting, SQLite and local file storage remain in use.
 
 ## Run locally
 
@@ -147,11 +147,50 @@ I configured Playwright to start the API and Vite automatically and to use a tem
 
 I configured GitHub Actions to run on pull requests targeting `main` and on pushes to `main`. The workflow installs both dependency sets, lints and builds the frontend, runs backend integration tests, and exercises frontend happy paths with Playwright. I keep this configuration in `.github/workflows/ci.yml`. The latest run I checked for `dev`, on commit `7be0a89`, completed successfully ([run 7](https://github.com/Levi-dev6638/NextHub/actions/runs/45915995752)).
 
-## Persistence, security, and deployment
+## Persistence and security
 
-I modeled the main tables for users, opportunities, applications, favorites, and résumés; I calculate recommendations dynamically from the student profile. I use Hibernate's `ddl-auto=update` to create or update the SQLite schema, but I know this does not replace versioned migrations in production. I import `backend/data/seed.json` only when the database has no users and never overwrite existing records. I protect authentication with HTTP sessions and BCrypt password hashes. I limit résumé uploads to 5 MB and serve them only to the student owner or a company with an application to its opportunity.
+I modeled the main tables for users, opportunities, applications, favorites, and résumés; I calculate recommendations dynamically from the student profile. Locally, I use Hibernate (`ddl-auto=update`) with SQLite and store files in `Back-end/uploads/`. The `prod` profile uses PostgreSQL with Flyway migrations and database-backed HTTP sessions. Résumés are stored in a private Supabase Storage bucket; only the API uses the service key, after checking student or company authorization. I import `backend/data/seed.json` only when enabled and when the database has no users. I protect passwords with BCrypt hashes and limit résumé uploads to 5 MB.
 
-I prepared this setup for a local academic demonstration, not a multi-instance production deployment. Before a public deployment, I would need durable shared session storage, managed persistence and file storage, HTTPS, and operational backups. I have not configured a hosted deployment.
+## Deployment preparation (not published)
+
+I prepared hosting with Vercel for the frontend, Render for the Java API, and Supabase for PostgreSQL and résumés. This repository has not created or published any hosted services. The recommended setup is:
+
+1. **Supabase:** create a project and a private Storage bucket named `nexthub-resumes`. Restrict it to PDFs and 5 MB. In the **Connect** panel, copy the **Shared Pooler — Session mode** connection details; this mode works with Render's IPv4 network and supports JDBC sessions and migrations. Use the pooler values to configure the JDBC URL, username, and password. Flyway applies the schema migration when the API starts for the first time.
+2. **Render:** create a Docker Web Service connected to this repository. Set the root directory to `.` (build context at the repository root), Dockerfile to `Back-end/Dockerfile`, and health check to `/actuator/health`. Add the environment variables below in the service dashboard; do not put them in source or the frontend.
+3. **Vercel:** import the repository with `frontend/` as the root directory. The Vite build outputs `dist/`; the app uses relative `/api` paths, so the deployment does not need `VITE_API_URL`. Once Render provides the public API URL, replace `https://your-nexthub-api.onrender.com` in `frontend/vercel.json` with the actual API origin. The rewrite proxies `/api/*` through the frontend domain so browser sessions remain same-origin.
+
+Render service variables:
+
+| Variable | Value |
+| --- | --- |
+| `SPRING_PROFILES_ACTIVE` | `prod` |
+| `DATABASE_URL` | `jdbc:postgresql://<pooler-host>:5432/postgres?sslmode=require` |
+| `DATABASE_USERNAME` | Exact pooler username shown by Supabase |
+| `DATABASE_PASSWORD` | Supabase database password |
+| `SUPABASE_URL` | `https://<project-ref>.supabase.co` |
+| `SUPABASE_STORAGE_BUCKET` | `nexthub-resumes` |
+| `SUPABASE_SERVICE_ROLE_KEY` | Project service key; backend-only secret |
+| `NEXTHUB_CORS_ALLOWED_ORIGIN` | Exact HTTPS URL of the Vercel frontend |
+| `NEXTHUB_SEED_ENABLED` | `false` |
+| `DATABASE_POOL_MAX` | `5` (optional) |
+
+In `.env.example`, `VITE_API_URL` configures only the local Vite proxy; the other values are references and Spring does not load this file. Set production variables in the provider dashboards; never commit keys, passwords, or `.env` files. Keep the bucket private and never configure the service key in Vercel. Demo seeding is disabled by default in `prod`.
+
+**Important free-tier limitations:** Render Free can suspend the API after 15 minutes without traffic, takes time to wake up, and has an ephemeral filesystem; local SQLite and files do not persist there. Supabase Free currently includes 500 MB of database and 1 GB of file storage, but projects may pause after a week without activity, and the tier is not a backup strategy. Limits can change, so check the provider links before setup. Render explicitly recommends against using Free instances for production applications. This setup is therefore suitable for demos and evaluation, not production reliability; use paid services and verified backups if the data matters. Since résumés contain personal information, use fictional data until consent, retention, and privacy requirements are established.
+
+Official references: [Supabase plans](https://supabase.com/pricing), [Supabase PostgreSQL connections](https://supabase.com/docs/guides/database/connecting-to-postgres), [private buckets](https://supabase.com/docs/guides/storage/buckets/fundamentals), [Render Free limitations](https://render.com/docs/free), and [Vercel Hobby plan](https://vercel.com/docs/plans/hobby).
+
+Before deploying, validate locally:
+
+```sh
+npm run lint:frontend
+npm run build:frontend
+npm test
+cd Back-end
+.\mvnw.cmd -Pproduction -DskipTests package
+```
+
+Also verify `/actuator/health`, login and session persistence, registration/application flows, and résumé upload/download in the hosted environment. Confirm that an unauthorized student or company cannot download another user's résumé. The Docker build and real Supabase integration must be verified in the provider environment because they require Docker and external services/credentials.
 
 ## Team
 
@@ -163,4 +202,4 @@ I prepared this setup for a local academic demonstration, not a multi-instance p
 ## Links
 
 - **Repository:** <https://github.com/Levi-dev6638/mural-de-oportunidades>
-- **Deployment:** Not configured
+- **Deployment:** Prepared, not published
